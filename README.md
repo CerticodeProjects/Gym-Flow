@@ -297,7 +297,7 @@ GymFlow utilizes a robust client-server synchronizer documented in [`CONTRACT.md
 
 Developed with precision for **GymFlow**:
 * **Lead Architect & Developer:** [Janver P. Manlapaz](https://github.com/janveryuu)
-* **Repository:** [janveryuu/GymFlow](https://github.com/janveryuu/GymFlow)
+* **Repository:** [CerticodeProjects/Gym-Flow](https://github.com/CerticodeProjects/Gym-Flow)
 * **Organization:** GymFlow Engineering Team
 
 ---
