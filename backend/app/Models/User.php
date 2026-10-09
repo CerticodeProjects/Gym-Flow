@@ -16,11 +16,23 @@ class User extends Authenticatable
     protected $fillable = [
         'name',
         'email',
+        'google_id',
         'password',
         'role',
         'phone',
         'photo_url',
         'must_change_password',
+        'gender',
+        'birthdate',
+        'height_cm',
+        'weight_kg',
+        'body_type',
+        'fitness_level',
+        'fitness_goal',
+        'training_type',
+        'days_per_week',
+        'daily_calorie_target',
+        'is_profile_completed',
     ];
 
     protected $hidden = [
@@ -31,9 +43,15 @@ class User extends Authenticatable
     protected function casts(): array
     {
         return [
-            'email_verified_at' => 'datetime',
-            'password'          => 'hashed',
+            'email_verified_at'    => 'datetime',
+            'password'             => 'hashed',
             'must_change_password' => 'boolean',
+            'birthdate'            => 'date',
+            'height_cm'            => 'float',
+            'weight_kg'            => 'float',
+            'days_per_week'        => 'integer',
+            'daily_calorie_target' => 'integer',
+            'is_profile_completed' => 'boolean',
         ];
     }
 
@@ -60,5 +78,15 @@ class User extends Authenticatable
     public function sessionBookings()
     {
         return $this->hasMany(SessionBooking::class);
+    }
+
+    public function waterIntakeEntries()
+    {
+        return $this->hasMany(WaterIntakeEntry::class);
+    }
+
+    public function nutritionEntries()
+    {
+        return $this->hasMany(NutritionEntry::class);
     }
 }

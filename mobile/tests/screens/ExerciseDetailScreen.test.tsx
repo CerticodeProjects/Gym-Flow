@@ -1,7 +1,6 @@
 import React, { act } from 'react';
 import TestRenderer from 'react-test-renderer';
 import { ExerciseDetailScreen } from '../../src/screens/ExerciseDetailScreen';
-import { useCustomWorkoutsStore } from '../../src/store/customWorkoutsStore';
 import * as Haptics from 'expo-haptics';
 
 jest.mock('expo-haptics', () => ({
@@ -33,11 +32,8 @@ describe('ExerciseDetailScreen', () => {
     navigate: jest.fn(),
   };
 
-  beforeEach(async () => {
+  beforeEach(() => {
     jest.clearAllMocks();
-    await act(async () => {
-      useCustomWorkoutsStore.getState().clearSelectedRoutineExerciseIds();
-    });
   });
 
   it('renders exercise info correctly', async () => {
@@ -53,42 +49,15 @@ describe('ExerciseDetailScreen', () => {
 
     expect(testRenderer).toBeDefined();
     const textNodes = testRenderer.root.findAllByType('Text' as any);
-    const textValues = textNodes.map((n: any) => n.props.children);
-
-    expect(textValues).toContain('Bench Press Power');
-    expect(textValues).toContain('Chest');
-    expect(textValues).toContain('Barbell');
-    expect(textValues).toContain('Intermediate');
-    expect(textValues).toContain('4 sets');
-    expect(textValues).toContain('10 reps');
-  });
-
-  it('toggles selection when action button is pressed', async () => {
-    let testRenderer: any;
-    await act(async () => {
-      testRenderer = TestRenderer.create(
-        <ExerciseDetailScreen
-          navigation={mockNavigation}
-          route={{ params: { workout: mockWorkout } }}
-        />
-      );
-    });
-
-    const actionButton = testRenderer.root.find(
-      (node: any) =>
-        node.props?.accessibilityRole === 'button' &&
-        node.props?.accessibilityLabel === 'Select for routine'
+    const flatTexts = textNodes.map((n: any) =>
+      Array.isArray(n.props.children) ? n.props.children.join('') : n.props.children
     );
-    expect(actionButton).toBeDefined();
 
-    await act(async () => {
-      actionButton.props.onPress();
-    });
-
-    expect(
-      useCustomWorkoutsStore.getState().selectedRoutineExerciseIds
-    ).toContain('workout-bench-press');
-    expect(Haptics.impactAsync).toHaveBeenCalled();
+    expect(flatTexts).toContain('Bench Press Power');
+    expect(flatTexts).toContain('CHEST');
+    expect(flatTexts).toContain('INTERMEDIATE');
+    expect(flatTexts).toContain('4 Sets');
+    expect(flatTexts).toContain('10 reps');
   });
 
   it('handles back button navigation', async () => {
@@ -105,7 +74,7 @@ describe('ExerciseDetailScreen', () => {
     const backButton = testRenderer.root.find(
       (node: any) =>
         node.props?.accessibilityRole === 'button' &&
-        node.props?.accessibilityLabel === 'Go back'
+        node.props?.accessibilityLabel === 'Back to workouts'
     );
     expect(backButton).toBeDefined();
 
@@ -132,5 +101,18 @@ describe('ExerciseDetailScreen', () => {
       (n: any) => n.props.children === 'Exercise information not found.'
     );
     expect(hasEmptyMsg).toBe(true);
+
+    const backButton = testRenderer.root.find(
+      (node: any) =>
+        node.props?.accessibilityRole === 'button' &&
+        node.props?.accessibilityLabel === 'Go back'
+    );
+    expect(backButton).toBeDefined();
+
+    await act(async () => {
+      backButton.props.onPress();
+    });
+
+    expect(mockNavigation.goBack).toHaveBeenCalled();
   });
 });

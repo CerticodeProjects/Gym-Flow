@@ -15,6 +15,7 @@ import {
   TouchableOpacity,
   Image,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { CameraView } from 'expo-camera';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -24,6 +25,7 @@ import {
   Image as ImageLucide,
 } from '../components/icons';
 import * as Crypto from 'expo-crypto';
+import * as Haptics from 'expo-haptics';
 
 import { colors, typography, borderRadius } from '../theme';
 import { getDatabase } from '../db/connection';
@@ -160,47 +162,121 @@ export const BarcodeScannerScreen: React.FC = () => {
     setIsLogging(true);
     try {
       const db = await getDatabase();
-      const id = Crypto.randomUUID();
+
+      // Ensure table, barcode, and image_url columns exist idempotently
+      try {
+        await db.execAsync(`
+          CREATE TABLE IF NOT EXISTS NutritionEntry (
+            id TEXT PRIMARY KEY NOT NULL,
+            food_name TEXT NOT NULL,
+            calories INTEGER NOT NULL,
+            protein_g REAL NOT NULL,
+            carbs_g REAL NOT NULL,
+            fat_g REAL NOT NULL,
+            serving_size TEXT,
+            meal_type TEXT NOT NULL,
+            source TEXT NOT NULL,
+            logged_at TEXT NOT NULL,
+            date_key TEXT NOT NULL,
+            barcode TEXT,
+            image_url TEXT
+          );
+        `);
+        await db.execAsync('ALTER TABLE NutritionEntry ADD COLUMN barcode TEXT;');
+      } catch {}
+      try {
+        await db.execAsync('ALTER TABLE NutritionEntry ADD COLUMN image_url TEXT;');
+      } catch {}
+
+      const id =
+        (typeof Crypto?.randomUUID === 'function' ? Crypto.randomUUID() : null) ||
+        `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
       const d = new Date();
       const now = d.toISOString();
       const dateKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
         d.getDate()
       ).padStart(2, '0')}`;
 
-      const servingLabel = basis === 'serving' ? product.servingSize : '100g';
+      const servingLabel = basis === 'serving' ? (product.servingSize || '1 serving') : '100g';
+      const foodName = (product.productName && product.productName.trim()) || 'Scanned Food';
+      const cal = Math.round(Number(macros.calories) || 0);
+      const prot = +(Number(macros.protein_g) || 0).toFixed(1);
+      const carbs = +(Number(macros.carbs_g) || 0).toFixed(1);
+      const fat = +(Number(macros.fat_g) || 0).toFixed(1);
+      const imageUrl = product.imageUrl || null;
 
-      await db.runAsync(
-        `INSERT INTO NutritionEntry
-         (id, food_name, calories, protein_g, carbs_g, fat_g, serving_size, meal_type, source, logged_at, date_key, barcode)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          id,
-          product.productName,
-          macros.calories,
-          macros.protein_g,
-          macros.carbs_g,
-          macros.fat_g,
-          servingLabel,
-          mealType,
-          'barcode',
-          now,
-          dateKey,
-          product.barcode,
-        ]
-      );
+      try {
+        await db.runAsync(
+          `INSERT INTO NutritionEntry
+           (id, food_name, calories, protein_g, carbs_g, fat_g, serving_size, meal_type, source, logged_at, date_key, barcode, image_url)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            id,
+            foodName,
+            cal,
+            prot,
+            carbs,
+            fat,
+            servingLabel,
+            mealType,
+            'barcode',
+            now,
+            dateKey,
+            product.barcode || null,
+            imageUrl,
+          ]
+        );
+      } catch (insertErr) {
+        // Fallback without image_url/barcode in case of legacy schema variance
+        try {
+          await db.runAsync(
+            `INSERT INTO NutritionEntry
+             (id, food_name, calories, protein_g, carbs_g, fat_g, serving_size, meal_type, source, logged_at, date_key, barcode)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              id,
+              foodName,
+              cal,
+              prot,
+              carbs,
+              fat,
+              servingLabel,
+              mealType,
+              'barcode',
+              now,
+              dateKey,
+              product.barcode || null,
+            ]
+          );
+        } catch {
+          await db.runAsync(
+            `INSERT INTO NutritionEntry
+             (id, food_name, calories, protein_g, carbs_g, fat_g, serving_size, meal_type, source, logged_at, date_key)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              id,
+              foodName,
+              cal,
+              prot,
+              carbs,
+              fat,
+              servingLabel,
+              mealType,
+              'barcode',
+              now,
+              dateKey,
+            ]
+          );
+        }
+      }
 
-      Alert.alert('Meal Logged!', `${product.productName} added to ${mealType}.`, [
-        {
-          text: 'Scan Another',
-          onPress: () => {
-            resetScanner();
-            if (mode === 'upload') {
-              handleUploadImage();
-            }
-          },
-        },
-        { text: 'Done', onPress: () => navigation.goBack() },
-      ]);
+      try {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch {}
+
+      // Reset scanner state and navigate back immediately so user sees logged meal on NutritionScreen
+      resetScanner();
+      navigation.goBack();
     } catch (err) {
       console.error('[BarcodeScanner] SQLite insert error:', err);
       Alert.alert('Error', 'Could not save to nutrition log. Please try again.');
@@ -277,7 +353,6 @@ export const BarcodeScannerScreen: React.FC = () => {
             <MacroBottomSheet
               product={productInfo}
               onLogMeal={handleLogMeal}
-              onScanAnother={resetScanner}
               onClose={resetScanner}
               isLogging={isLogging}
             />
@@ -377,10 +452,6 @@ export const BarcodeScannerScreen: React.FC = () => {
           <MacroBottomSheet
             product={productInfo}
             onLogMeal={handleLogMeal}
-            onScanAnother={() => {
-              resetScanner();
-              handleUploadImage();
-            }}
             onClose={resetScanner}
             isLogging={isLogging}
           />

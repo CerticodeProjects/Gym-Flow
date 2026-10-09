@@ -4,7 +4,7 @@
  * serving-size switcher, calorie distribution bar, and meal logging actions.
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -13,6 +13,7 @@ import {
   Image,
   ScrollView,
   ActivityIndicator,
+  TextInput,
 } from 'react-native';
 import {
   X,
@@ -23,6 +24,9 @@ import {
   Dumbbell,
   Wheat,
   Droplet,
+  Edit2,
+  Check,
+  AlertCircle,
 } from '../../../components/icons';
 import { colors, typography, borderRadius } from '../../../theme';
 import { ProductMacroInfo, MealType, MacroNutrientValues } from '../types';
@@ -35,7 +39,7 @@ export interface MacroBottomSheetProps {
     macros: MacroNutrientValues;
     basis: 'serving' | '100g';
   }) => Promise<void> | void;
-  onScanAnother: () => void;
+  onScanAnother?: () => void;
   onClose: () => void;
   isLogging?: boolean;
 }
@@ -45,7 +49,6 @@ const MEALS: MealType[] = ['Breakfast', 'Lunch', 'Dinner', 'Snacks'];
 export const MacroBottomSheet: React.FC<MacroBottomSheetProps> = ({
   product,
   onLogMeal,
-  onScanAnother,
   onClose,
   isLogging = false,
 }) => {
@@ -54,17 +57,54 @@ export const MacroBottomSheet: React.FC<MacroBottomSheetProps> = ({
   );
   const [selectedMeal, setSelectedMeal] = useState<MealType>('Snacks');
 
-  const activeMacros = basis === 'serving' ? product.perServing : product.per100g;
+  const [servingMacros, setServingMacros] = useState<MacroNutrientValues>({ ...product.perServing });
+  const [per100gMacros, setPer100gMacros] = useState<MacroNutrientValues>({ ...product.per100g });
+  const [isEditing, setIsEditing] = useState<boolean>(false);
 
-  // Caloric distribution percentages
-  const proteinKcal = activeMacros.protein_g * 4;
-  const carbsKcal = activeMacros.carbs_g * 4;
-  const fatKcal = activeMacros.fat_g * 9;
-  const totalMacroKcal = Math.max(1, proteinKcal + carbsKcal + fatKcal);
+  useEffect(() => {
+    setServingMacros({ ...product.perServing });
+    setPer100gMacros({ ...product.per100g });
+    setBasis(product.basisAvailable === '100g' ? '100g' : 'serving');
+    const isZero =
+      product.perServing.calories === 0 &&
+      product.perServing.protein_g === 0 &&
+      product.perServing.carbs_g === 0 &&
+      product.perServing.fat_g === 0;
+    if (isZero) {
+      setIsEditing(true);
+    }
+  }, [product]);
 
-  const proteinPct = Math.round((proteinKcal / totalMacroKcal) * 100);
-  const carbsPct = Math.round((carbsKcal / totalMacroKcal) * 100);
-  const fatPct = Math.max(0, 100 - proteinPct - carbsPct);
+  const activeMacros = basis === 'serving' ? servingMacros : per100gMacros;
+
+  const updateMacro = (field: keyof MacroNutrientValues, rawText: string) => {
+    const val = parseFloat(rawText.replace(/,/g, '.')) || 0;
+    const updater = (prev: MacroNutrientValues) => ({
+      ...prev,
+      [field]: val,
+    });
+    if (basis === 'serving') {
+      setServingMacros(updater);
+    } else {
+      setPer100gMacros(updater);
+    }
+  };
+
+  const isZeroNutrition =
+    activeMacros.calories === 0 &&
+    activeMacros.protein_g === 0 &&
+    activeMacros.carbs_g === 0 &&
+    activeMacros.fat_g === 0;
+
+  // Caloric distribution percentages (accurate calculation)
+  const proteinKcal = (activeMacros.protein_g || 0) * 4;
+  const carbsKcal = (activeMacros.carbs_g || 0) * 4;
+  const fatKcal = (activeMacros.fat_g || 0) * 9;
+  const totalMacroKcal = proteinKcal + carbsKcal + fatKcal;
+
+  const proteinPct = totalMacroKcal > 0 ? Math.round((proteinKcal / totalMacroKcal) * 100) : 0;
+  const carbsPct = totalMacroKcal > 0 ? Math.round((carbsKcal / totalMacroKcal) * 100) : 0;
+  const fatPct = totalMacroKcal > 0 ? Math.max(0, 100 - proteinPct - carbsPct) : 0;
 
   const handleLogPress = () => {
     onLogMeal({
@@ -123,6 +163,19 @@ export const MacroBottomSheet: React.FC<MacroBottomSheetProps> = ({
             </View>
           </View>
 
+          {/* Missing Macro Warning Banner if database has 0 nutrition */}
+          {isZeroNutrition && (
+            <View style={styles.missingWarningCard}>
+              <AlertCircle color={colors.warningAmber} size={18} style={{ marginRight: 8, marginTop: 2 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.missingWarningTitle}>Nutrition Data Not In Database</Text>
+                <Text style={styles.missingWarningText}>
+                  Open Food Facts did not have macro facts for this barcode. Enter the macros below from the packaging before logging.
+                </Text>
+              </View>
+            </View>
+          )}
+
           {/* Basis Switcher: Per Serving vs Per 100g */}
           <View style={styles.basisSwitchWrapper}>
             <TouchableOpacity
@@ -144,6 +197,28 @@ export const MacroBottomSheet: React.FC<MacroBottomSheetProps> = ({
             </TouchableOpacity>
           </View>
 
+          {/* Nutrition Header with Edit Toggle */}
+          <View style={styles.macroHeaderRow}>
+            <Text style={styles.sectionLabel}>Nutritional Breakdown</Text>
+            <TouchableOpacity
+              style={styles.editMacrosBtn}
+              onPress={() => setIsEditing(!isEditing)}
+              activeOpacity={0.7}
+            >
+              {isEditing ? (
+                <>
+                  <Check color={colors.primary} size={14} style={{ marginRight: 4 }} />
+                  <Text style={styles.editMacrosBtnTextActive}>Done Editing</Text>
+                </>
+              ) : (
+                <>
+                  <Edit2 color={colors.textSecondary} size={14} style={{ marginRight: 4 }} />
+                  <Text style={styles.editMacrosBtnText}>Edit Values</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+
           {/* 4 Primary Macro Cards */}
           <View style={styles.macroGrid}>
             {/* Calories */}
@@ -152,7 +227,18 @@ export const MacroBottomSheet: React.FC<MacroBottomSheetProps> = ({
                 <Flame color={colors.yellow} size={16} />
                 <Text style={styles.macroCardLabel}>CALORIES</Text>
               </View>
-              <Text style={styles.macroValueCalories}>{activeMacros.calories}</Text>
+              {isEditing ? (
+                <TextInput
+                  style={styles.macroInput}
+                  keyboardType="numeric"
+                  value={activeMacros.calories ? String(activeMacros.calories) : ''}
+                  placeholder="0"
+                  placeholderTextColor={colors.textMuted}
+                  onChangeText={(txt) => updateMacro('calories', txt)}
+                />
+              ) : (
+                <Text style={styles.macroValueCalories}>{activeMacros.calories}</Text>
+              )}
               <Text style={styles.macroUnit}>kcal</Text>
             </View>
 
@@ -162,9 +248,20 @@ export const MacroBottomSheet: React.FC<MacroBottomSheetProps> = ({
                 <Dumbbell color={colors.cyan} size={16} />
                 <Text style={styles.macroCardLabel}>PROTEIN</Text>
               </View>
-              <Text style={[styles.macroValue, { color: colors.cyan }]}>
-                {activeMacros.protein_g}
-              </Text>
+              {isEditing ? (
+                <TextInput
+                  style={[styles.macroInput, { color: colors.cyan }]}
+                  keyboardType="numeric"
+                  value={activeMacros.protein_g ? String(activeMacros.protein_g) : ''}
+                  placeholder="0"
+                  placeholderTextColor={colors.textMuted}
+                  onChangeText={(txt) => updateMacro('protein_g', txt)}
+                />
+              ) : (
+                <Text style={[styles.macroValue, { color: colors.cyan }]}>
+                  {activeMacros.protein_g}
+                </Text>
+              )}
               <Text style={styles.macroUnit}>grams</Text>
             </View>
 
@@ -174,9 +271,20 @@ export const MacroBottomSheet: React.FC<MacroBottomSheetProps> = ({
                 <Wheat color={colors.warningAmber} size={16} />
                 <Text style={styles.macroCardLabel}>CARBS</Text>
               </View>
-              <Text style={[styles.macroValue, { color: colors.warningAmber }]}>
-                {activeMacros.carbs_g}
-              </Text>
+              {isEditing ? (
+                <TextInput
+                  style={[styles.macroInput, { color: colors.warningAmber }]}
+                  keyboardType="numeric"
+                  value={activeMacros.carbs_g ? String(activeMacros.carbs_g) : ''}
+                  placeholder="0"
+                  placeholderTextColor={colors.textMuted}
+                  onChangeText={(txt) => updateMacro('carbs_g', txt)}
+                />
+              ) : (
+                <Text style={[styles.macroValue, { color: colors.warningAmber }]}>
+                  {activeMacros.carbs_g}
+                </Text>
+              )}
               <Text style={styles.macroUnit}>grams</Text>
             </View>
 
@@ -186,7 +294,18 @@ export const MacroBottomSheet: React.FC<MacroBottomSheetProps> = ({
                 <Droplet color="#FF6B8B" size={16} />
                 <Text style={styles.macroCardLabel}>FATS</Text>
               </View>
-              <Text style={[styles.macroValue, { color: '#FF6B8B' }]}>{activeMacros.fat_g}</Text>
+              {isEditing ? (
+                <TextInput
+                  style={[styles.macroInput, { color: '#FF6B8B' }]}
+                  keyboardType="numeric"
+                  value={activeMacros.fat_g ? String(activeMacros.fat_g) : ''}
+                  placeholder="0"
+                  placeholderTextColor={colors.textMuted}
+                  onChangeText={(txt) => updateMacro('fat_g', txt)}
+                />
+              ) : (
+                <Text style={[styles.macroValue, { color: '#FF6B8B' }]}>{activeMacros.fat_g}</Text>
+              )}
               <Text style={styles.macroUnit}>grams</Text>
             </View>
           </View>
@@ -199,9 +318,15 @@ export const MacroBottomSheet: React.FC<MacroBottomSheetProps> = ({
             </View>
 
             <View style={styles.ratioBar}>
-              <View style={[styles.ratioSegment, { flex: Math.max(proteinPct, 2), backgroundColor: colors.cyan }]} />
-              <View style={[styles.ratioSegment, { flex: Math.max(carbsPct, 2), backgroundColor: colors.warningAmber }]} />
-              <View style={[styles.ratioSegment, { flex: Math.max(fatPct, 2), backgroundColor: '#FF6B8B' }]} />
+              {totalMacroKcal > 0 ? (
+                <>
+                  <View style={[styles.ratioSegment, { flex: Math.max(proteinPct, 2), backgroundColor: colors.cyan }]} />
+                  <View style={[styles.ratioSegment, { flex: Math.max(carbsPct, 2), backgroundColor: colors.warningAmber }]} />
+                  <View style={[styles.ratioSegment, { flex: Math.max(fatPct, 2), backgroundColor: '#FF6B8B' }]} />
+                </>
+              ) : (
+                <View style={[styles.ratioSegment, { flex: 1, backgroundColor: colors.surfaceHighlight }]} />
+              )}
             </View>
 
             <View style={styles.ratioLegend}>
@@ -257,12 +382,13 @@ export const MacroBottomSheet: React.FC<MacroBottomSheetProps> = ({
             })}
           </View>
 
-          {/* Action Buttons */}
+          {/* Action Button */}
           <View style={styles.actionsRow}>
             <TouchableOpacity
               style={styles.logButton}
               onPress={handleLogPress}
               disabled={isLogging}
+              activeOpacity={0.8}
             >
               {isLogging ? (
                 <ActivityIndicator color={colors.textInverse} size="small" />
@@ -272,15 +398,6 @@ export const MacroBottomSheet: React.FC<MacroBottomSheetProps> = ({
                   <Text style={styles.logButtonText}>Log {selectedMeal}</Text>
                 </>
               )}
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.scanAnotherButton}
-              onPress={onScanAnother}
-              disabled={isLogging}
-            >
-              <RotateCcw color={colors.text} size={18} style={{ marginRight: 6 }} />
-              <Text style={styles.scanAnotherButtonText}>Scan Another</Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
@@ -613,5 +730,68 @@ const styles = StyleSheet.create({
     fontSize: typography.sizes.sm,
     fontFamily: typography.fonts.headingMedium,
     color: colors.text,
+  },
+  missingWarningCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: 'rgba(255, 179, 0, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 179, 0, 0.3)',
+    borderRadius: borderRadius.md,
+    padding: 12,
+    marginBottom: 16,
+  },
+  missingWarningTitle: {
+    fontSize: typography.sizes.xs,
+    fontFamily: typography.fonts.headingBold,
+    color: colors.warningAmber,
+    marginBottom: 2,
+    textTransform: 'uppercase',
+  },
+  missingWarningText: {
+    fontSize: typography.sizes.xs,
+    fontFamily: typography.fonts.body,
+    color: colors.textSecondary,
+    lineHeight: 16,
+  },
+  macroHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  editMacrosBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: borderRadius.sm,
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  editMacrosBtnText: {
+    fontSize: typography.sizes.xs,
+    fontFamily: typography.fonts.headingMedium,
+    color: colors.textSecondary,
+  },
+  editMacrosBtnTextActive: {
+    fontSize: typography.sizes.xs,
+    fontFamily: typography.fonts.headingBold,
+    color: colors.primary,
+  },
+  macroInput: {
+    fontSize: 20,
+    fontFamily: typography.fonts.headingBold,
+    color: colors.text,
+    textAlign: 'center',
+    paddingVertical: 2,
+    paddingHorizontal: 4,
+    minWidth: 48,
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: borderRadius.xs,
+    borderWidth: 1,
+    borderColor: colors.borderHighlight,
+    marginVertical: 4,
   },
 });

@@ -6,12 +6,10 @@ import {
 } from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { ArrowLeft, Droplets, Plus, X, Lock } from '../components/icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { colors, typography, borderRadius } from '../theme';
 import { PercentRing } from '../components/PercentRing';
 import { getDatabase } from '../db/connection';
 import { useAuthStore } from '../store/authStore';
-import { PrismBackground } from '../components/PrismBackground';
 import * as Crypto from 'expo-crypto';
 
 // ---------------------------------------------------------------------------
@@ -129,24 +127,6 @@ export const WaterIntakeScreen: React.FC = () => {
   if (!isProfileComplete) {
     return (
       <SafeAreaView style={styles.container}>
-        {/* Luminous Animated 3D Prism Background in Electric Cyan */}
-        <PrismBackground
-          height={3.5}
-          baseWidth={5.5}
-          animationType="rotate"
-          glow={1}
-          noise={0.3}
-          transparent={true}
-          scale={1.0}
-          offset={{ x: 0, y: -310 }}
-          hueShift={0}
-          colorFrequency={1}
-          bloom={1}
-          timeScale={0.5}
-          tintColor="#00E5FF"
-          gradientColor="#FFFFFF"
-        />
-
         <View style={styles.header}>
           <TouchableOpacity
             style={styles.headerCircleBtn}
@@ -197,24 +177,6 @@ export const WaterIntakeScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Luminous Animated 3D Prism Background in Electric Cyan */}
-      <PrismBackground
-        height={3.5}
-        baseWidth={5.5}
-        animationType="rotate"
-        glow={1}
-        noise={0.3}
-        transparent={true}
-        scale={1.0}
-        offset={{ x: 0, y: -310 }}
-        hueShift={0}
-        colorFrequency={1}
-        bloom={1}
-        timeScale={0.5}
-        tintColor="#00E5FF"
-        gradientColor="#FFFFFF"
-      />
-
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.headerCircleBtn}

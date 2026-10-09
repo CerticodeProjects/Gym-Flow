@@ -169,7 +169,8 @@ CREATE TABLE IF NOT EXISTS NutritionEntry (
   source TEXT NOT NULL,
   logged_at TEXT NOT NULL,
   date_key TEXT NOT NULL,
-  barcode TEXT
+  barcode TEXT,
+  image_url TEXT
 );
 `;
 

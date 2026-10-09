@@ -61,6 +61,28 @@ export const migrations: Migration[] = [
       } catch {}
     },
   },
+  {
+    version: 5,
+    name: 'v5_add_barcode_to_nutrition_entry',
+    up: async (db: SQLiteDatabase) => {
+      try {
+        await db.execAsync('ALTER TABLE NutritionEntry ADD COLUMN barcode TEXT;');
+      } catch {
+        // Column may already exist
+      }
+    },
+  },
+  {
+    version: 6,
+    name: 'v6_add_image_url_to_nutrition_entry',
+    up: async (db: SQLiteDatabase) => {
+      try {
+        await db.execAsync('ALTER TABLE NutritionEntry ADD COLUMN image_url TEXT;');
+      } catch {
+        // Column may already exist
+      }
+    },
+  },
 ];
 
 /**

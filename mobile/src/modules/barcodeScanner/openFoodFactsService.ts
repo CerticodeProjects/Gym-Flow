@@ -48,6 +48,56 @@ export interface FetchProductOptions {
  * not yet indexed or with incomplete data in Open Food Facts.
  */
 export const VERIFIED_PRODUCT_CATALOG: Record<string, ProductMacroInfo> = {
+  '0750515030206': {
+    barcode: '0750515030206',
+    productName: 'SkyFlakes Crackers',
+    brand: 'M.Y. San',
+    imageUrl: 'https://images.openfoodfacts.org/images/products/075/051/503/0206/front_en.3.400.jpg',
+    servingSize: '25g (3 crackers)',
+    perServing: {
+      calories: 120,
+      protein_g: 2.5,
+      carbs_g: 17,
+      fat_g: 5,
+    },
+    per100g: {
+      calories: 480,
+      protein_g: 10,
+      carbs_g: 68,
+      fat_g: 20,
+    },
+    basisAvailable: 'serving',
+    macroPercentages: {
+      proteinPct: 8,
+      carbPct: 55,
+      fatPct: 37,
+    },
+  },
+  '750515030206': {
+    barcode: '750515030206',
+    productName: 'SkyFlakes Crackers',
+    brand: 'M.Y. San',
+    imageUrl: 'https://images.openfoodfacts.org/images/products/075/051/503/0206/front_en.3.400.jpg',
+    servingSize: '25g (3 crackers)',
+    perServing: {
+      calories: 120,
+      protein_g: 2.5,
+      carbs_g: 17,
+      fat_g: 5,
+    },
+    per100g: {
+      calories: 480,
+      protein_g: 10,
+      carbs_g: 68,
+      fat_g: 20,
+    },
+    basisAvailable: 'serving',
+    macroPercentages: {
+      proteinPct: 8,
+      carbPct: 55,
+      fatPct: 37,
+    },
+  },
   '8717703610062': {
     barcode: '8717703610062',
     productName: 'M.Y. San SkyFlakes Crackers',
@@ -98,8 +148,58 @@ export const VERIFIED_PRODUCT_CATALOG: Record<string, ProductMacroInfo> = {
       fatPct: 37,
     },
   },
+  '750515018402': {
+    barcode: '750515018402',
+    productName: 'SkyFlakes Crackers',
+    brand: 'M.Y. San',
+    imageUrl: null,
+    servingSize: '25g (3 crackers)',
+    perServing: {
+      calories: 120,
+      protein_g: 2.5,
+      carbs_g: 17,
+      fat_g: 5,
+    },
+    per100g: {
+      calories: 480,
+      protein_g: 10,
+      carbs_g: 68,
+      fat_g: 20,
+    },
+    basisAvailable: 'serving',
+    macroPercentages: {
+      proteinPct: 8,
+      carbPct: 55,
+      fatPct: 37,
+    },
+  },
   '0750515018303': {
     barcode: '0750515018303',
+    productName: 'SkyFlakes Crackers',
+    brand: 'M.Y. San',
+    imageUrl: null,
+    servingSize: '25g (3 crackers)',
+    perServing: {
+      calories: 120,
+      protein_g: 2.5,
+      carbs_g: 17,
+      fat_g: 5,
+    },
+    per100g: {
+      calories: 480,
+      protein_g: 10,
+      carbs_g: 68,
+      fat_g: 20,
+    },
+    basisAvailable: 'serving',
+    macroPercentages: {
+      proteinPct: 8,
+      carbPct: 55,
+      fatPct: 37,
+    },
+  },
+  '750515018303': {
+    barcode: '750515018303',
     productName: 'SkyFlakes Crackers',
     brand: 'M.Y. San',
     imageUrl: null,

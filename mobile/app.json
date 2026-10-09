@@ -2,6 +2,7 @@
   "expo": {
     "name": "GymFlow",
     "slug": "gymflow-mobile",
+    "scheme": "gymflow",
     "version": "0.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -30,7 +31,8 @@
       "favicon": "./assets/favicon.png"
     },
     "extra": {
-      "apiBaseUrl": "http://192.168.1.159:8000"
+      "apiBaseUrl": "http://192.168.1.159:8000",
+      "googleWebClientId": "1080429854200-81nnap4m1c6euq5jtf6tvl3l9pqgab1j.apps.googleusercontent.com"
     },
     "plugins": [
       "expo-secure-store",
@@ -43,7 +45,8 @@
         {
           "cameraPermission": "Allow GymFlow to access your camera to scan food barcodes."
         }
-      ]
+      ],
+      "expo-web-browser"
     ]
   }
 }

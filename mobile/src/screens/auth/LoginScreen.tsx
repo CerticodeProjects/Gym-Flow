@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -10,13 +10,15 @@ import {
   Platform,
   ScrollView,
   Image,
+  Modal,
 } from 'react-native';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Lock, Mail, AlertCircle, Zap, ArrowLeft, CheckCircle2, Sparkles } from '../../components/icons';
+import { Lock, Mail, AlertCircle, Zap, ArrowLeft, CheckCircle2, Sparkles, X, Check } from '../../components/icons';
 import Svg, { Path } from 'react-native-svg';
+import * as Google from 'expo-auth-session/providers/google';
 import { colors, typography, borderRadius, spacing } from '../../theme';
 import { apiClient, setAuthToken } from '../../api/client';
 import { getDatabase } from '../../db/connection';
@@ -24,6 +26,8 @@ import { useAuthStore } from '../../store/authStore';
 import { useDevMockStore } from '../../store/devMockStore';
 import { useCustomWorkoutsStore } from '../../store/customWorkoutsStore';
 import { GymFlowLogo, GymFlowWordmark } from '../../components/GymFlowBrand';
+import { GOOGLE_AUTH_CONFIG, isGoogleAuthLiveConfigured } from '../../config/authConfig';
+import { authenticateWithGoogleBackend, fetchGoogleUserProfile } from '../../services/googleAuth';
 
 const GoogleIcon: React.FC<{ size?: number }> = ({ size = 22 }) => (
   <Svg width={size} height={size} viewBox="0 0 24 24">
@@ -82,6 +86,81 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ route, navigation }) =
   const [submittingProvider, setSubmittingProvider] = useState<'google' | 'apple' | null>(null);
   const [showEmailForm, setShowEmailForm] = useState(false);
   const setAuth = useAuthStore((state) => state.setAuth);
+
+  // Google OAuth Hook & State
+  const isGoogleConfigured = isGoogleAuthLiveConfigured();
+  const [googleRequest, googleResponse, promptGoogleAsync] = Google.useAuthRequest(
+    isGoogleConfigured
+      ? {
+          webClientId: GOOGLE_AUTH_CONFIG.webClientId,
+          iosClientId: GOOGLE_AUTH_CONFIG.iosClientId,
+          androidClientId: GOOGLE_AUTH_CONFIG.androidClientId,
+          scopes: ['profile', 'email'],
+        }
+      : {}
+  );
+
+  const [showGoogleModal, setShowGoogleModal] = useState(false);
+  const [testGoogleEmail, setTestGoogleEmail] = useState(
+    onboardingData?.firstName
+      ? `${onboardingData.firstName.toLowerCase()}.${(onboardingData.lastName || 'doe').toLowerCase()}@gmail.com`
+      : 'jane.google@gymflow.test'
+  );
+  const [testGoogleName, setTestGoogleName] = useState(
+    onboardingData?.fullName || 'Jane Doe'
+  );
+
+  useEffect(() => {
+    if (googleResponse?.type === 'success') {
+      const processGoogleOAuth = async () => {
+        setIsSubmitting(true);
+        setSubmittingProvider('google');
+        setErrorMessage(null);
+
+        try {
+          const { authentication, params } = googleResponse;
+          const accessToken = authentication?.accessToken || (params as any)?.access_token;
+          const idToken = authentication?.idToken || (params as any)?.id_token;
+
+          let profileInfo: any = null;
+          if (accessToken) {
+            profileInfo = await fetchGoogleUserProfile(accessToken);
+          }
+
+          const result = await authenticateWithGoogleBackend({
+            id_token: idToken,
+            access_token: accessToken,
+            email: profileInfo?.email,
+            name: profileInfo?.name || onboardingData?.fullName,
+            photo_url: profileInfo?.picture,
+            google_id: profileInfo?.id,
+          });
+
+          if (result.success && result.token && result.user) {
+            const resolvedUser = {
+              ...result.user,
+              ...(onboardingData?.fitnessGoal ? { fitness_goal: onboardingData.fitnessGoal } : {}),
+            };
+            await syncOnboardingProfile();
+            await setAuth(result.token, resolvedUser, false);
+          } else {
+            setErrorMessage(result.error || 'Failed to authenticate with Google.');
+          }
+        } catch (err: any) {
+          setErrorMessage(err?.message || 'Error occurred during Google sign-in.');
+        } finally {
+          setIsSubmitting(false);
+          setSubmittingProvider(null);
+        }
+      };
+
+      processGoogleOAuth();
+    } else if (googleResponse?.type === 'error') {
+      setErrorMessage(
+        googleResponse.error?.message || 'Google sign-in encountered an error.'
+      );
+    }
+  }, [googleResponse]);
 
   const defaultEmail = onboardingData?.firstName 
     ? `${onboardingData.firstName.toLowerCase()}.${(onboardingData.lastName || 'doe').toLowerCase()}@gymflow.test` 
@@ -284,37 +363,54 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ route, navigation }) =
 
   const handleGoogleLogin = async () => {
     setErrorMessage(null);
+
+    if (isGoogleConfigured) {
+      if (!googleRequest) {
+        setErrorMessage('Google Sign-In is initializing. Please tap again in a moment.');
+        return;
+      }
+      try {
+        await promptGoogleAsync();
+      } catch (err: any) {
+        setErrorMessage(err?.message || 'Failed to start Google sign-in.');
+      }
+      return;
+    }
+
+    // Google Client ID not yet populated in authConfig.ts:
+    // Open Apple HIG Google Sign-In sheet/modal that allows testing with live backend
+    setShowGoogleModal(true);
+  };
+
+  const handleTestGoogleSignIn = async (customEmail?: string, customName?: string) => {
     setIsSubmitting(true);
     setSubmittingProvider('google');
+    setErrorMessage(null);
+    setShowGoogleModal(false);
+
+    const email = (customEmail || testGoogleEmail).trim().toLowerCase();
+    const name = (customName || testGoogleName).trim();
 
     try {
-      const response = await apiClient.post(
-        '/api/v1/auth/login',
-        {
-          email: 'jane.doe@gymflow.test',
-          password: 'Password123!',
-        },
-        { timeout: 2500 }
-      );
+      const result = await authenticateWithGoogleBackend({
+        email,
+        name: name || 'Google Member',
+        google_id: `goog_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        photo_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200',
+      });
 
-      const { token, user } = response.data;
-      const resolvedUser = {
-        ...user,
-        ...(onboardingData?.fitnessGoal ? { fitness_goal: onboardingData.fitnessGoal } : {}),
-      };
-      await syncOnboardingProfile();
-      await setAuth(token, resolvedUser, false);
-    } catch {
-      useDevMockStore.getState().setMockEnabled(true);
-      const fallbackUser = {
-        id: 1,
-        name: onboardingData?.fullName || 'Jane Doe',
-        email: 'jane.doe@gymflow.test',
-        role: 'member' as const,
-        must_change_password: false,
-        fitness_goal: onboardingData?.fitnessGoal || 'build_muscle',
-      };
-      await setAuth('dev-offline-token-gymflow', fallbackUser, false);
+      if (result.success && result.token && result.user) {
+        const resolvedUser = {
+          ...result.user,
+          ...(onboardingData?.fitnessGoal ? { fitness_goal: onboardingData.fitnessGoal } : {}),
+        };
+        await syncOnboardingProfile();
+        await setAuth(result.token, resolvedUser, false);
+      } else {
+        setErrorMessage(result.error || 'Google login failed.');
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Unable to connect to backend server.');
     } finally {
       setIsSubmitting(false);
       setSubmittingProvider(null);
@@ -403,6 +499,97 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ route, navigation }) =
       navigation.navigate('Welcome');
     }
   };
+
+  const renderGoogleModal = () => (
+    <Modal
+      visible={showGoogleModal}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setShowGoogleModal(false)}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.googleModalCard}>
+          {/* Header */}
+          <View style={styles.googleModalHeader}>
+            <View style={styles.googleBadgeIcon}>
+              <GoogleIcon size={26} />
+            </View>
+            <TouchableOpacity
+              onPress={() => setShowGoogleModal(false)}
+              style={styles.modalCloseBtn}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+            >
+              <X size={20} color="#8E8E93" />
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.googleModalTitle}>Google Sign-In</Text>
+          <Text style={styles.googleModalSubtitle}>
+            {isSignUp ? 'Create your GymFlow account with Google' : 'Sign in to access your workout plan & biometrics'}
+          </Text>
+
+          {/* Test Account / Live Info */}
+          <View style={styles.googleAccountPreview}>
+            <View style={styles.googleAvatarBadge}>
+              <Text style={styles.googleAvatarText}>
+                {(testGoogleName || 'G').charAt(0).toUpperCase()}
+              </Text>
+            </View>
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <Text style={styles.googleAccountName}>{testGoogleName || 'Google Member'}</Text>
+              <Text style={styles.googleAccountEmail} numberOfLines={1}>{testGoogleEmail}</Text>
+            </View>
+            <View style={styles.googleVerifiedPill}>
+              <Text style={styles.googleVerifiedText}>Ready</Text>
+            </View>
+          </View>
+
+          {/* Account Email Field */}
+          <View style={{ marginBottom: 16 }}>
+            <Text style={styles.googleFieldLabel}>Account Email</Text>
+            <TextInput
+              style={styles.googleInput}
+              value={testGoogleEmail}
+              onChangeText={setTestGoogleEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              placeholder="user@gmail.com"
+              placeholderTextColor="#666666"
+            />
+          </View>
+
+          {/* Connect / Sign In Button */}
+          <TouchableOpacity
+            style={styles.googleModalSubmitBtn}
+            onPress={() => handleTestGoogleSignIn()}
+            disabled={isSubmitting}
+            activeOpacity={0.85}
+          >
+            {isSubmitting ? (
+              <ActivityIndicator color="#000000" />
+            ) : (
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <GoogleIcon size={20} />
+                <Text style={styles.googleModalSubmitText}>
+                  Continue with Google
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+
+          {/* Developer Note */}
+          <View style={styles.googleConfigHintCard}>
+            <Text style={styles.googleConfigHintTitle}>Backend Live Connected</Text>
+            <Text style={styles.googleConfigHintBody}>
+              Calls <Text style={{ color: '#CCFF00' }}>/api/v1/auth/google</Text> directly to provision your member session. To enable Google web OAuth popup, add your Client ID to <Text style={{ color: '#FFFFFF' }}>authConfig.ts</Text>.
+            </Text>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
 
   if (!showEmailForm) {
     return (
@@ -561,6 +748,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ route, navigation }) =
             </TouchableOpacity>
           </View>
         </SafeAreaView>
+        {renderGoogleModal()}
       </View>
     );
   }
@@ -715,6 +903,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ route, navigation }) =
             </TouchableOpacity>
           </View>
         </ScrollView>
+        {renderGoogleModal()}
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -1026,5 +1215,163 @@ const styles = StyleSheet.create({
     color: 'rgba(255, 255, 255, 0.7)',
     fontSize: typography.sizes.xs,
     marginTop: 2,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.lg,
+  },
+  googleModalCard: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#161618',
+    borderRadius: 24,
+    padding: 22,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255, 255, 255, 0.18)',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.4,
+    shadowRadius: 20,
+    elevation: 8,
+  },
+  googleModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  googleBadgeIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  modalCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  googleModalTitle: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontFamily: typography.fonts.headingBold,
+    marginBottom: 4,
+  },
+  googleModalSubtitle: {
+    color: 'rgba(255, 255, 255, 0.65)',
+    fontSize: typography.sizes.sm,
+    marginBottom: 18,
+    lineHeight: 19,
+  },
+  googleAccountPreview: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  googleAvatarBadge: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#4285F4',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  googleAvatarText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  googleAccountName: {
+    color: '#FFFFFF',
+    fontSize: typography.sizes.sm,
+    fontFamily: typography.fonts.headingSemiBold,
+  },
+  googleAccountEmail: {
+    color: 'rgba(255, 255, 255, 0.55)',
+    fontSize: typography.sizes.xs,
+    marginTop: 2,
+  },
+  googleVerifiedPill: {
+    backgroundColor: 'rgba(52, 168, 83, 0.15)',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderColor: 'rgba(52, 168, 83, 0.3)',
+  },
+  googleVerifiedText: {
+    color: '#34A853',
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  googleFieldLabel: {
+    color: 'rgba(255, 255, 255, 0.8)',
+    fontSize: typography.sizes.xs,
+    fontWeight: '600',
+    marginBottom: 6,
+    letterSpacing: 0.3,
+  },
+  googleInput: {
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    color: '#FFFFFF',
+    fontSize: typography.sizes.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255, 255, 255, 0.14)',
+  },
+  googleModalSubmitBtn: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 4,
+    marginBottom: 14,
+    shadowColor: '#FFFFFF',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+  },
+  googleModalSubmitText: {
+    color: '#000000',
+    fontSize: 15,
+    fontFamily: typography.fonts.headingBold,
+    marginLeft: 8,
+  },
+  googleConfigHintCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  googleConfigHintTitle: {
+    color: 'rgba(255, 255, 255, 0.9)',
+    fontSize: typography.sizes.xs,
+    fontFamily: typography.fonts.headingBold,
+    marginBottom: 4,
+  },
+  googleConfigHintBody: {
+    color: 'rgba(255, 255, 255, 0.5)',
+    fontSize: 11,
+    lineHeight: 16,
   },
 });

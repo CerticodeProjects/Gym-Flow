@@ -113,4 +113,58 @@ class AuthTest extends TestCase
             ])
             ->assertStatus(422);
     }
+
+    // ── Google OAuth ──────────────────────────────────────────────────────
+
+    public function test_google_login_creates_new_member_and_returns_token(): void
+    {
+        $response = $this->postJson('/api/v1/auth/google', [
+            'email'     => 'brand.new.google@gymflow.test',
+            'name'      => 'Google Newbie',
+            'google_id' => 'google-oauth-sub-12345',
+            'photo_url' => 'https://example.com/avatar.jpg',
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJsonStructure([
+                'token',
+                'user' => ['id', 'name', 'role', 'email'],
+            ])
+            ->assertJsonPath('user.role', 'member')
+            ->assertJsonPath('user.email', 'brand.new.google@gymflow.test');
+
+        $this->assertDatabaseHas('users', [
+            'email'     => 'brand.new.google@gymflow.test',
+            'google_id' => 'google-oauth-sub-12345',
+        ]);
+    }
+
+    public function test_google_login_existing_user_returns_token(): void
+    {
+        $existing = $this->makeMember([
+            'email' => 'existing.google@gymflow.test',
+            'name'  => 'Existing Google User',
+        ]);
+
+        $response = $this->postJson('/api/v1/auth/google', [
+            'email'     => 'existing.google@gymflow.test',
+            'google_id' => 'google-oauth-sub-67890',
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJsonPath('user.id', $existing->id)
+            ->assertJsonPath('user.email', 'existing.google@gymflow.test');
+
+        $existing->refresh();
+        $this->assertEquals('google-oauth-sub-67890', $existing->google_id);
+    }
+
+    public function test_google_login_missing_email_returns_422(): void
+    {
+        $response = $this->postJson('/api/v1/auth/google', []);
+
+        $response->assertStatus(422)
+            ->assertJsonStructure(['message']);
+    }
 }
+

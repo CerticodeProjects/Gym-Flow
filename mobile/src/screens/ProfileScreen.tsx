@@ -41,6 +41,7 @@ import {
 } from '../components/icons';
 import { colors, typography, borderRadius, spacing } from '../theme';
 import { useAuthStore } from '../store/authStore';
+import { useSyncStore } from '../store/syncStore';
 import { getSyncRepository } from '../sync/SyncRepository';
 import { GymFlowLogo, GymFlowWordmark } from '../components/GymFlowBrand';
 import { DevSettingsSection } from '../components/dev/DevSettingsSection';
@@ -78,6 +79,8 @@ export const ProfileScreen: React.FC = () => {
   const [isLegalOpen, setIsLegalOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [isDevOpen, setIsDevOpen] = useState(false);
+  const [isLogoutOpen, setIsLogoutOpen] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   const {
     control,
@@ -243,17 +246,25 @@ export const ProfileScreen: React.FC = () => {
     }
   };
 
+  const handleConfirmLogout = async () => {
+    setIsLoggingOut(true);
+    try {
+      try {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      } catch {}
+      await logout();
+      useSyncStore.getState().reset();
+      setIsLogoutOpen(false);
+    } catch {
+      Alert.alert('Sign Out Error', 'Unable to complete sign out. Please try again.');
+    } finally {
+      setIsLoggingOut(false);
+    }
+  };
+
   const handleSignOut = () => {
-    Alert.alert('Sign Out', 'Are you sure you want to sign out of your GymFlow account?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Sign Out',
-        style: 'destructive',
-        onPress: async () => {
-          await logout();
-        },
-      },
-    ]);
+    // Open Apple HIG confirmation sheet modal (works consistently across Web, iOS, and Android)
+    setIsLogoutOpen(true);
   };
 
   const membershipTier = memberData?.membership?.tier?.replace('_', ' ').toUpperCase() || 'ALL-ACCESS';
@@ -535,6 +546,7 @@ export const ProfileScreen: React.FC = () => {
           activeOpacity={0.75}
           accessibilityRole="button"
           accessibilityLabel="Log out of GymFlow"
+          testID="profile-logout-button"
         >
           <LogOut size={18} color="#FFFFFF" strokeWidth={2.2} style={{ marginRight: 8 }} />
           <Text style={styles.logoutText}>Log Out</Text>
@@ -978,6 +990,92 @@ export const ProfileScreen: React.FC = () => {
           </View>
         </Modal>
       )}
+
+      {/* Sign Out Confirmation Modal */}
+      <Modal
+        visible={isLogoutOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          if (!isLoggingOut) setIsLogoutOpen(false);
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => {
+              if (!isLoggingOut) setIsLogoutOpen(false);
+            }}
+          />
+          <View style={styles.modalContent}>
+            <View style={styles.modalDragHandle} />
+
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Sign Out</Text>
+              <TouchableOpacity
+                style={styles.modalCloseBtn}
+                onPress={() => {
+                  if (!isLoggingOut) setIsLogoutOpen(false);
+                }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                activeOpacity={0.7}
+                disabled={isLoggingOut}
+                accessibilityRole="button"
+                accessibilityLabel="Close sign out modal"
+              >
+                <X size={16} color="rgba(255, 255, 255, 0.7)" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Logout Alert Card */}
+            <View style={styles.logoutAlertCard}>
+              <View style={styles.logoutIconBadge}>
+                <LogOut size={22} color="#FF453A" strokeWidth={2.2} />
+              </View>
+              <View style={styles.logoutAlertTextCol}>
+                <Text style={styles.logoutAlertTitle}>Sign out of your account?</Text>
+                <Text style={styles.logoutAlertSubtitle}>
+                  You will need to sign back in with your credentials to access your workouts, streaks, and health logs.
+                </Text>
+              </View>
+            </View>
+
+            {/* Destructive Confirm Button */}
+            <TouchableOpacity
+              style={[styles.modalDestructiveBtn, isLoggingOut && { opacity: 0.8 }]}
+              onPress={handleConfirmLogout}
+              disabled={isLoggingOut}
+              activeOpacity={0.75}
+              accessibilityRole="button"
+              accessibilityLabel="Confirm sign out"
+              testID="confirm-logout-button"
+            >
+              {isLoggingOut ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <>
+                  <LogOut size={16} color="#FFFFFF" strokeWidth={2.2} style={{ marginRight: 8 }} />
+                  <Text style={styles.modalDestructiveBtnText}>Sign Out</Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            {/* Secondary Cancel Button */}
+            <TouchableOpacity
+              style={styles.modalSecondaryBtn}
+              onPress={() => setIsLogoutOpen(false)}
+              disabled={isLoggingOut}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Cancel sign out"
+              testID="cancel-logout-button"
+            >
+              <Text style={styles.modalSecondaryBtnText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -1433,5 +1531,87 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: 'rgba(255, 255, 255, 0.50)',
     lineHeight: 16,
+  },
+
+  // Sign Out Modal styles
+  logoutAlertCard: {
+    backgroundColor: 'rgba(255, 69, 58, 0.08)',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255, 69, 58, 0.22)',
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 14,
+    marginBottom: 20,
+  },
+  logoutIconBadge: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255, 69, 58, 0.14)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255, 69, 58, 0.30)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  logoutAlertTextCol: {
+    flex: 1,
+  },
+  logoutAlertTitle: {
+    fontSize: 15,
+    fontFamily: typography.fonts.headingBold,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    letterSpacing: -0.2,
+    marginBottom: 4,
+  },
+  logoutAlertSubtitle: {
+    fontSize: 13,
+    color: 'rgba(255, 255, 255, 0.65)',
+    lineHeight: 18,
+    letterSpacing: -0.1,
+  },
+  modalDestructiveBtn: {
+    backgroundColor: '#FF453A',
+    height: 50,
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#FF453A',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 4,
+    marginBottom: 10,
+    ...(Platform.OS === 'web' ? {
+      cursor: 'pointer',
+    } as any : {}),
+  },
+  modalDestructiveBtnText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontFamily: typography.fonts.headingBold,
+    fontWeight: '700',
+  },
+  modalSecondaryBtn: {
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    height: 48,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255, 255, 255, 0.16)',
+    ...(Platform.OS === 'web' ? {
+      cursor: 'pointer',
+    } as any : {}),
+  },
+  modalSecondaryBtnText: {
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontSize: 15,
+    fontFamily: typography.fonts.headingMedium,
+    fontWeight: '600',
   },
 });

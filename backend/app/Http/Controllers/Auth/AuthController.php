@@ -4,10 +4,14 @@ namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Models\Membership;
+use App\Models\MemberPreference;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Password;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
@@ -37,9 +41,140 @@ class AuthController extends Controller
         return response()->json([
             'token' => $token,
             'user'  => [
-                'id'   => $user->id,
-                'name' => $user->name,
-                'role' => $user->role,
+                'id'        => $user->id,
+                'name'      => $user->name,
+                'role'      => $user->role,
+                'email'     => $user->email,
+                'photo_url' => $user->photo_url,
+            ],
+        ]);
+    }
+
+    /**
+     * POST /api/v1/auth/google
+     * Handles Google OAuth sign-in & automatic member provisioning
+     */
+    public function googleLogin(Request $request): JsonResponse
+    {
+        $request->validate([
+            'id_token'     => ['nullable', 'string'],
+            'access_token' => ['nullable', 'string'],
+            'email'        => ['nullable', 'email'],
+            'name'         => ['nullable', 'string'],
+            'photo_url'    => ['nullable', 'string'],
+            'google_id'    => ['nullable', 'string'],
+        ]);
+
+        $email = $request->email;
+        $name = $request->name;
+        $googleId = $request->google_id;
+        $photoUrl = $request->photo_url;
+
+        // 1. Verify id_token with Google tokeninfo endpoint if provided
+        if ($request->filled('id_token')) {
+            try {
+                $response = Http::timeout(5)->get('https://oauth2.googleapis.com/tokeninfo', [
+                    'id_token' => $request->id_token,
+                ]);
+
+                if ($response->successful()) {
+                    $googleData = $response->json();
+                    $email = $googleData['email'] ?? $email;
+                    $googleId = $googleData['sub'] ?? $googleId;
+                    $name = $googleData['name'] ?? $name;
+                    $photoUrl = $googleData['picture'] ?? $photoUrl;
+                }
+            } catch (\Throwable $e) {
+                // If network verification fails, continue with provided parameters
+            }
+        }
+
+        // 2. Verify access_token with Google userinfo endpoint if provided and email not yet set
+        if ($request->filled('access_token') && (! $email || ! $googleId)) {
+            try {
+                $response = Http::timeout(5)
+                    ->withToken($request->access_token)
+                    ->get('https://www.googleapis.com/oauth2/v3/userinfo');
+
+                if ($response->successful()) {
+                    $googleData = $response->json();
+                    $email = $googleData['email'] ?? $email;
+                    $googleId = $googleData['sub'] ?? $googleId;
+                    $name = $googleData['name'] ?? $name;
+                    $photoUrl = $googleData['picture'] ?? $photoUrl;
+                }
+            } catch (\Throwable $e) {
+                // Continue
+            }
+        }
+
+        if (! $email) {
+            return response()->json([
+                'message' => 'Unable to authenticate with Google. Valid email address is required.',
+            ], 422);
+        }
+
+        // 3. Find existing user by google_id or email
+        $user = null;
+        if ($googleId) {
+            $user = User::where('google_id', $googleId)->first();
+        }
+        if (! $user) {
+            $user = User::where('email', $email)->first();
+        }
+
+        if ($user) {
+            $updates = [];
+            if ($googleId && ! $user->google_id) {
+                $updates['google_id'] = $googleId;
+            }
+            if ($photoUrl && ! $user->photo_url) {
+                $updates['photo_url'] = $photoUrl;
+            }
+            if ($updates) {
+                $user->update($updates);
+            }
+        } else {
+            // Auto-provision new member
+            $user = User::create([
+                'name'                 => $name ?: explode('@', $email)[0],
+                'email'                => $email,
+                'google_id'            => $googleId,
+                'password'             => Hash::make(Str::random(32)),
+                'role'                 => 'member',
+                'photo_url'            => $photoUrl,
+                'must_change_password' => false,
+                'email_verified_at'    => now(),
+            ]);
+
+            Membership::create([
+                'user_id'     => $user->id,
+                'external_id' => 'mem_' . Str::random(10),
+                'tier'        => 'Standard Access',
+                'status'      => 'active',
+                'expires_at'  => now()->addYear(),
+            ]);
+
+            MemberPreference::create([
+                'user_id'             => $user->id,
+                'workout_type'        => 'full-body',
+                'intensity'           => 'moderate',
+                'weekly_workout_goal' => 3,
+            ]);
+        }
+
+        // Fresh token
+        $user->tokens()->delete();
+        $token = $user->createToken('mobile-app')->plainTextToken;
+
+        return response()->json([
+            'token' => $token,
+            'user'  => [
+                'id'        => $user->id,
+                'name'      => $user->name,
+                'role'      => $user->role,
+                'email'     => $user->email,
+                'photo_url' => $user->photo_url,
             ],
         ]);
     }

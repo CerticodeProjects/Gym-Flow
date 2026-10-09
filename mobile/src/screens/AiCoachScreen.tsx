@@ -15,7 +15,8 @@ import { useAuthStore } from '../store/authStore';
 import { PrismBackground } from '../components/PrismBackground';
 import { TypewriterPlaceholder } from '../components/TypewriterPlaceholder';
 import { TypewriterText } from '../components/TypewriterText';
-import { VoicePill } from '../components/VoicePill';
+import { RainbowGlowWrapper } from '../components/RainbowGlowWrapper';
+import { AudioFrequencyWave } from '../components/AudioFrequencyWave';
 import { calculateDailyCalorieTarget, resolveAge } from '../utils/nutritionCalculator';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -227,6 +228,71 @@ const cleanMessageText = (raw: string): string => {
     .replace(/#{2,}/g, '')
     .trim();
 };
+
+// Retain active utterance reference to prevent Chrome garbage-collection pause
+let currentUtterance: SpeechSynthesisUtterance | null = null;
+
+function speakWithWebSpeech(text: string) {
+  if (Platform.OS !== 'web' || typeof window === 'undefined' || !('speechSynthesis' in window)) {
+    return;
+  }
+
+  try {
+    window.speechSynthesis.cancel();
+    currentUtterance = null;
+
+    // Clean formatting and punctuation for natural speech flow
+    const speechCleaned = text
+      .replace(/•/g, '')
+      .replace(/\*\*/g, '')
+      .replace(/[*_#`~>]/g, '')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .trim();
+
+    if (!speechCleaned) return;
+
+    const utterance = new SpeechSynthesisUtterance(speechCleaned);
+    utterance.lang = 'en-US';
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+    utterance.volume = 1.0;
+
+    const voices = window.speechSynthesis.getVoices();
+    if (voices && voices.length > 0) {
+      const preferred = voices.find(
+        v => (v.lang === 'en-US' || v.lang.startsWith('en')) &&
+             (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Samantha') || v.name.includes('Daniel') || v.name.includes('Karen') || v.name.includes('Alex'))
+      ) || voices.find(v => v.lang.startsWith('en'));
+
+      if (preferred) {
+        utterance.voice = preferred;
+      }
+    }
+
+    utterance.onend = () => {
+      currentUtterance = null;
+    };
+
+    utterance.onerror = (e) => {
+      console.warn('[AiCoach] Speech synthesis error:', e);
+      currentUtterance = null;
+    };
+
+    currentUtterance = utterance;
+    window.speechSynthesis.speak(utterance);
+  } catch (err) {
+    console.warn('[AiCoach] speakWithWebSpeech failed:', err);
+  }
+}
+
+function cancelWebSpeech() {
+  if (Platform.OS === 'web' && typeof window !== 'undefined' && 'speechSynthesis' in window) {
+    try {
+      window.speechSynthesis.cancel();
+      currentUtterance = null;
+    } catch {}
+  }
+}
 
 const formatSessionTime = (isoString: string): string => {
   try {
@@ -464,7 +530,14 @@ export const AiCoachScreen: React.FC = () => {
   const sendBtnScale = useRef(new Animated.Value(1)).current;
   const [isTyping,      setIsTyping]      = useState(false);
   const [isListening,   setIsListening]   = useState(false);
+  const [liveTranscript, setLiveTranscript] = useState('');
   const recognitionRef = useRef<any>(null);
+  const audioContextRef = useRef<any>(null);
+  const analyserRef = useRef<any>(null);
+  const mediaStreamRef = useRef<any>(null);
+  const silenceTimerRef = useRef<any>(null);
+  const baseTextRef = useRef<string>('');
+  const waveOpacityAnim = useRef(new Animated.Value(1)).current;
   const [sessionId,     setSessionId]     = useState<string>(() => Crypto.randomUUID());
   const [sessions,      setSessions]      = useState<ChatSession[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -496,6 +569,29 @@ export const AiCoachScreen: React.FC = () => {
       } catch (err) { console.error('[AiCoach] load:', err); }
     })();
   }, []));
+
+  // Smooth crossfade: when user starts talking, smoothly hide frequency wave and show user text
+  useEffect(() => {
+    if (isListening) {
+      if (liveTranscript.trim()) {
+        Animated.timing(waveOpacityAnim, {
+          toValue: 0,
+          duration: 220,
+          easing: Easing.out(Easing.ease),
+          useNativeDriver: Platform.OS !== 'web',
+        }).start();
+      } else {
+        Animated.timing(waveOpacityAnim, {
+          toValue: 1,
+          duration: 220,
+          easing: Easing.out(Easing.ease),
+          useNativeDriver: Platform.OS !== 'web',
+        }).start();
+      }
+    } else {
+      waveOpacityAnim.setValue(1);
+    }
+  }, [isListening, liveTranscript, waveOpacityAnim]);
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -615,39 +711,164 @@ export const AiCoachScreen: React.FC = () => {
     closeSidebar();
   };
 
-  const startListening = () => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SpeechRecognition) {
-        const recognition = new SpeechRecognition();
-        recognition.continuous = false;
-        recognition.interimResults = false;
-        recognition.lang = 'en-US';
-
-        recognition.onstart = () => setIsListening(true);
-        recognition.onresult = (event: any) => {
-          const transcript = event.results?.[0]?.[0]?.transcript;
-          if (transcript) {
-            setInputText(prev => (prev ? `${prev} ${transcript}` : transcript));
-          }
-        };
-        recognition.onerror = () => setIsListening(false);
-        recognition.onend = () => setIsListening(false);
-
-        recognitionRef.current = recognition;
-        try {
-          recognition.start();
-        } catch {
-          setIsListening(false);
+  const cleanupAudioStream = useCallback(() => {
+    if (mediaStreamRef.current) {
+      try {
+        const tracks = mediaStreamRef.current.getTracks ? mediaStreamRef.current.getTracks() : [];
+        tracks.forEach((track: any) => {
+          try { track.stop(); } catch {}
+        });
+      } catch {}
+      mediaStreamRef.current = null;
+    }
+    if (audioContextRef.current) {
+      try {
+        if (audioContextRef.current.state !== 'closed') {
+          audioContextRef.current.close();
         }
-        return;
+      } catch {}
+      audioContextRef.current = null;
+    }
+    analyserRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
+      }
+      if (recognitionRef.current) {
+        try { recognitionRef.current.abort(); } catch {}
+      }
+      cleanupAudioStream();
+      cancelWebSpeech();
+    };
+  }, [cleanupAudioStream]);
+
+  const startListening = async () => {
+    cancelWebSpeech();
+    try {
+      if (Platform.OS !== 'web') {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      }
+    } catch {}
+
+    baseTextRef.current = inputText.trim();
+    setLiveTranscript('');
+    setIsListening(true);
+
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+
+    // Default timeout if silence continues with no speech
+    silenceTimerRef.current = setTimeout(() => {
+      stopListening('silence_timeout');
+    }, 8000);
+
+    // 1. Web Audio API Analyser for real-time frequency visualization
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && navigator?.mediaDevices?.getUserMedia) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaStreamRef.current = stream;
+
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtx) {
+          const audioCtx = new AudioCtx();
+          audioContextRef.current = audioCtx;
+          const source = audioCtx.createMediaStreamSource(stream);
+          const analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 64;
+          analyser.smoothingTimeConstant = 0.8;
+          source.connect(analyser);
+          analyserRef.current = analyser;
+        }
+      } catch (micErr) {
+        console.warn('[AiCoach] Microphone stream notice:', micErr);
       }
     }
 
-    setIsListening(true);
+    // 2. Web Speech API SpeechRecognition
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        try {
+          const recognition = new SpeechRecognition();
+          recognition.continuous = true;
+          recognition.interimResults = true;
+          recognition.lang = 'en-US';
+
+          recognition.onstart = () => {
+            setIsListening(true);
+          };
+
+          recognition.onresult = (event: any) => {
+            let interim = '';
+            let final = '';
+
+            for (let i = 0; i < event.results.length; i++) {
+              const res = event.results[i];
+              const transcriptPiece = res[0]?.transcript || '';
+              if (res.isFinal) {
+                final += (final ? ' ' : '') + transcriptPiece;
+              } else {
+                interim += (interim ? ' ' : '') + transcriptPiece;
+              }
+            }
+
+            const spokenText = (final + (interim ? ' ' + interim : '')).trim();
+            if (spokenText) {
+              const fullText = baseTextRef.current ? `${baseTextRef.current} ${spokenText}` : spokenText;
+              setInputText(fullText);
+              setLiveTranscript(spokenText);
+
+              // 3-SECOND SILENCE VALIDATION:
+              // When user speaks and then stops speaking for 3 seconds,
+              // automatically type user speech in the typing bar and stop listening
+              if (silenceTimerRef.current) {
+                clearTimeout(silenceTimerRef.current);
+              }
+              silenceTimerRef.current = setTimeout(() => {
+                stopListening('silence_timeout');
+              }, 3000);
+            }
+          };
+
+          recognition.onerror = (event: any) => {
+            console.warn('[AiCoach] Speech error:', event?.error);
+            if (event?.error !== 'no-speech') {
+              stopListening();
+            }
+          };
+
+          recognition.onend = () => {
+            setIsListening(false);
+            cleanupAudioStream();
+          };
+
+          recognitionRef.current = recognition;
+          recognition.start();
+          return;
+        } catch (err) {
+          console.warn('[AiCoach] SpeechRecognition start failed:', err);
+        }
+      }
+    }
   };
 
   const stopListening = (reason?: string) => {
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+
+    try {
+      if (Platform.OS !== 'web') {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
+    } catch {}
+
     if (recognitionRef.current) {
       try {
         if (reason === 'cancel') {
@@ -656,11 +877,16 @@ export const AiCoachScreen: React.FC = () => {
           recognitionRef.current.stop();
         }
       } catch {}
+      recognitionRef.current = null;
     }
+
+    cleanupAudioStream();
     setIsListening(false);
+    setLiveTranscript('');
   };
 
   const startNewChat = () => {
+    cancelWebSpeech();
     try {
       if (Platform.OS !== 'web') {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -704,8 +930,8 @@ export const AiCoachScreen: React.FC = () => {
     } catch (err) { console.error('[AiCoach] saveMessage:', err); }
   };
 
-  const sendMessage = async () => {
-    const text = inputText.trim();
+  const sendMessage = async (overrideText?: string) => {
+    const text = (typeof overrideText === 'string' ? overrideText : inputText).trim();
     if (!text || isTyping) return;
 
     const userMsg: ChatMsg = {
@@ -758,6 +984,7 @@ export const AiCoachScreen: React.FC = () => {
       setActiveTypingMsgId(aiMsg.id);
       setMessages(prev => [...prev, aiMsg]);
       await saveMessage(aiMsg);
+      speakWithWebSpeech(responseText);
     } catch (err) {
       console.error('[AiCoach] getResponse:', err);
       const errMsg: ChatMsg = {
@@ -768,6 +995,7 @@ export const AiCoachScreen: React.FC = () => {
       };
       setActiveTypingMsgId(errMsg.id);
       setMessages(prev => [...prev, errMsg]);
+      speakWithWebSpeech(errMsg.content);
     } finally {
       setIsTyping(false);
     }
@@ -878,77 +1106,148 @@ export const AiCoachScreen: React.FC = () => {
 
         {/* Floating Input bar */}
         <View style={styles.floatingInputWrapper} pointerEvents="box-none">
-          <View style={styles.floatingBar} pointerEvents="auto">
-            <VoicePill
-              isListening={isListening}
-              onStart={startListening}
-              onStop={stopListening}
-              accentColor="#f5f5f5"
-              iconColor="#FFFFFF"
-              backgroundColor="#27272a"
-            />
-
-            <View style={styles.inputFieldContainer}>
-              <TextInput
-                style={styles.floatingInput}
-                value={inputText}
-                onChangeText={setInputText}
-                onFocus={() => setIsInputFocused(true)}
-                onBlur={() => setIsInputFocused(false)}
-                placeholder=""
-                placeholderTextColor="rgba(255, 255, 255, 0.65)"
-                multiline
-                maxLength={500}
-                returnKeyType="send"
-                onSubmitEditing={sendMessage}
-                blurOnSubmit={false}
-                onKeyPress={(e) => {
-                  if (Platform.OS === 'web' && (e.nativeEvent as any).key === 'Enter' && !(e.nativeEvent as any).shiftKey) {
-                    e.preventDefault?.();
-                    sendMessage();
+          <RainbowGlowWrapper
+            active={isListening}
+            borderRadius={28}
+            style={styles.rainbowWrapper}
+          >
+            <View
+              style={[
+                styles.floatingBar,
+                isListening && styles.floatingBarListening,
+              ]}
+              pointerEvents="auto"
+            >
+              {/* Mic button without white container, in clean Apple gray */}
+              <TouchableOpacity
+                style={styles.micBtn}
+                onPress={() => {
+                  if (isListening) {
+                    stopListening();
+                  } else {
+                    startListening();
                   }
                 }}
-              />
-
-              {!inputText && !isListening && (
-                <TypewriterPlaceholder
-                  isFocused={isInputFocused}
-                  fontWeight="400"
-                  prompts={[
-                    'Ask Alab AI…',
-                    'Ask how much protein I need today…',
-                    'Ask for a 4-day muscle split…',
-                    'Ask how to improve my squat depth…',
-                    'Ask for healthy pre-workout meal ideas…',
-                    'Ask to analyze my workout progress…',
-                  ]}
-                  typingSpeed={65}
-                  deletingSpeed={28}
-                  pauseDelay={2400}
-                  initialDelay={600}
-                />
-              )}
-            </View>
-
-            <Animated.View style={{ transform: [{ scale: sendBtnScale }] }}>
-              <TouchableOpacity
-                style={[
-                  styles.sendBtn,
-                  inputText.trim() && !isTyping ? styles.sendBtnActive : styles.sendBtnDisabled,
-                ]}
-                onPress={sendMessage}
-                disabled={!inputText.trim() || isTyping}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel={isListening ? 'Stop listening' : 'Start voice input'}
               >
-                <ArrowUp
-                  color={inputText.trim() && !isTyping ? '#FFFFFF' : 'rgba(255, 255, 255, 0.3)'}
-                  size={18}
-                  strokeWidth={2.4}
+                <Mic
+                  size={20}
+                  color={isListening ? 'rgba(255, 255, 255, 0.88)' : 'rgba(255, 255, 255, 0.5)'}
+                  strokeWidth={2.2}
                 />
               </TouchableOpacity>
-            </Animated.View>
-          </View>
+
+              {/* Center Input Area: smooth crossfade between wide frequency wave and live spoken text */}
+              <View style={styles.centerInputArea}>
+                {/* Typing bar text input: shows user's speech or typed text */}
+                <Animated.View
+                  style={[
+                    styles.inputFieldContainer,
+                    isListening && {
+                      opacity: waveOpacityAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [1, 0],
+                      }),
+                    },
+                  ]}
+                  pointerEvents={isListening && !liveTranscript.trim() ? 'none' : 'auto'}
+                >
+                  <TextInput
+                    style={styles.floatingInput}
+                    value={inputText}
+                    onChangeText={setInputText}
+                    onFocus={() => setIsInputFocused(true)}
+                    onBlur={() => setIsInputFocused(false)}
+                    placeholder=""
+                    placeholderTextColor="rgba(255, 255, 255, 0.65)"
+                    multiline
+                    maxLength={500}
+                    returnKeyType="send"
+                    onSubmitEditing={() => sendMessage()}
+                    blurOnSubmit={false}
+                    onKeyPress={(e) => {
+                      if (Platform.OS === 'web' && (e.nativeEvent as any).key === 'Enter' && !(e.nativeEvent as any).shiftKey) {
+                        e.preventDefault?.();
+                        sendMessage();
+                      }
+                    }}
+                  />
+
+                  {!inputText && !isListening && (
+                    <TypewriterPlaceholder
+                      isFocused={isInputFocused}
+                      fontWeight="400"
+                      prompts={[
+                        'Ask Alab AI…',
+                        'Ask how much protein I need today…',
+                        'Ask for a 4-day muscle split…',
+                        'Ask how to improve my squat depth…',
+                        'Ask for healthy pre-workout meal ideas…',
+                        'Ask to analyze my workout progress…',
+                      ]}
+                      typingSpeed={65}
+                      deletingSpeed={28}
+                      pauseDelay={2400}
+                      initialDelay={600}
+                    />
+                  )}
+                </Animated.View>
+
+                {/* Wide Gray Frequency Wave: smoothly crossfades out as user begins talking */}
+                {isListening && (
+                  <Animated.View
+                    style={[
+                      styles.wideWaveWrapper,
+                      {
+                        position: 'absolute',
+                        left: 0,
+                        right: 0,
+                        top: 0,
+                        bottom: 0,
+                        opacity: waveOpacityAnim,
+                      },
+                    ]}
+                    pointerEvents={liveTranscript.trim() ? 'none' : 'auto'}
+                  >
+                    <AudioFrequencyWave
+                      isListening={isListening}
+                      audioAnalyser={analyserRef.current}
+                      barCount={32}
+                    />
+                  </Animated.View>
+                )}
+              </View>
+
+              <Animated.View style={{ transform: [{ scale: sendBtnScale }] }}>
+                <TouchableOpacity
+                  style={[
+                    styles.sendBtn,
+                    inputText.trim() && !isTyping ? styles.sendBtnActive : styles.sendBtnDisabled,
+                  ]}
+                  onPress={() => {
+                    if (isListening) {
+                      stopListening();
+                    }
+                    sendMessage();
+                  }}
+                  disabled={!inputText.trim() || isTyping}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Send message"
+                >
+                  <ArrowUp
+                    color={inputText.trim() && !isTyping ? '#FFFFFF' : 'rgba(255, 255, 255, 0.3)'}
+                    size={18}
+                    strokeWidth={2.4}
+                  />
+                </TouchableOpacity>
+              </Animated.View>
+            </View>
+          </RainbowGlowWrapper>
         </View>
       </KeyboardAvoidingView>
 
@@ -1120,6 +1419,9 @@ const styles = StyleSheet.create({
     paddingTop: 6,
     backgroundColor: 'transparent',
   },
+  rainbowWrapper:        {
+    width: '100%',
+  },
   floatingBar:           {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1128,40 +1430,72 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.22)',
     paddingHorizontal: 8,
-    paddingVertical: 6,
+    paddingVertical: 0,
+    height: 52,
     minHeight: 52,
+    maxHeight: 52,
     shadowColor: '#000000',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.5,
     shadowRadius: 18,
     elevation: 8,
     ...(Platform.OS === 'web' ? {
+      boxSizing: 'border-box',
       backdropFilter: 'blur(20px) saturate(190%)',
       WebkitBackdropFilter: 'blur(20px) saturate(190%)',
     } as any : {}),
   },
-  inputFieldContainer:   {
+  floatingBarListening:  {
+    borderColor: 'transparent',
+    backgroundColor: 'transparent',
+  },
+  centerInputArea:       {
     flex: 1,
+    height: 52,
     position: 'relative',
     justifyContent: 'center',
-    minHeight: 38,
+  },
+  wideWaveWrapper:       {
+    flex: 1,
+    height: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  inputFieldContainer:   {
+    flex: 1,
+    height: 52,
+    position: 'relative',
+    justifyContent: 'center',
   },
   floatingInput:         {
     width: '100%',
+    height: 38,
     fontSize: typography.sizes.sm,
     fontWeight: '400',
     lineHeight: 20,
     color: '#FFFFFF',
     paddingHorizontal: 8,
-    paddingTop: Platform.OS === 'web' ? 15 : 10,
-    paddingBottom: Platform.OS === 'web' ? 11 : 8,
+    paddingTop: 0,
+    paddingBottom: 0,
     textAlignVertical: 'center',
-    maxHeight: 100,
     ...(Platform.OS === 'web' ? { outlineWidth: 0, outlineStyle: 'none' } as any : {}),
   },
-  sendBtn:               { width: 38, height: 38, borderRadius: 19, justifyContent: 'center', alignItems: 'center', flexShrink: 0, backgroundColor: 'transparent', borderWidth: 1, borderColor: 'transparent' },
+  sendBtn:               { width: 36, height: 36, borderRadius: 18, justifyContent: 'center', alignItems: 'center', flexShrink: 0, backgroundColor: 'transparent', borderWidth: 1, borderColor: 'transparent' },
   sendBtnActive:         { backgroundColor: 'rgba(255, 255, 255, 0.12)', borderColor: 'rgba(255, 255, 255, 0.22)' },
   sendBtnDisabled:       { opacity: 0.4 },
+  micBtn:                {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 6,
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    ...(Platform.OS === 'web' ? {
+      cursor: 'pointer',
+      transition: 'transform 0.15s ease, opacity 0.15s ease',
+    } as any : {}),
+  },
 
   // Apple HIG Sidebar styles
   sidebarOverlay:        {

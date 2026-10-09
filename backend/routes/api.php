@@ -8,6 +8,8 @@ use App\Http\Controllers\Member\ProfileController;
 use App\Http\Controllers\Member\ProgressController;
 use App\Http\Controllers\Member\SessionsController;
 use App\Http\Controllers\Member\WorkoutsController;
+use App\Http\Controllers\Member\WaterController;
+use App\Http\Controllers\Member\NutritionController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -32,6 +34,7 @@ Route::prefix('v1')->group(function () {
 
         // Public
         Route::post('/login', [AuthController::class, 'login']);
+        Route::post('/google', [AuthController::class, 'googleLogin']);
         Route::post('/forgot-password', [AuthController::class, 'forgotPassword']);
 
         // Authenticated
@@ -84,5 +87,14 @@ Route::prefix('v1')->group(function () {
             // Sessions
             Route::get('/sessions', [SessionsController::class, 'index']);
             Route::post('/sessions/{id}/cancel', [SessionsController::class, 'cancel']);
+
+            // Water intake tracking
+            Route::get('/water', [WaterController::class, 'index']);
+            Route::post('/water', [WaterController::class, 'store']);
+
+            // Nutrition & food logging
+            Route::get('/nutrition', [NutritionController::class, 'index']);
+            Route::post('/nutrition', [NutritionController::class, 'store']);
+            Route::delete('/nutrition/{id}', [NutritionController::class, 'destroy']);
         });
 });

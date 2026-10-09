@@ -236,3 +236,16 @@ jest.mock('expo-image-picker', () => ({
   launchCameraAsync: jest.fn().mockResolvedValue({ canceled: true, assets: [] }),
   requestMediaLibraryPermissionsAsync: jest.fn().mockResolvedValue({ status: 'granted', granted: true }),
 }));
+
+// Expo WebBrowser & AuthSession mocks
+jest.mock('expo-web-browser', () => ({
+  maybeCompleteAuthSession: jest.fn(),
+  openAuthSessionAsync: jest.fn().mockResolvedValue({ type: 'dismiss' }),
+  openBrowserAsync: jest.fn().mockResolvedValue({ type: 'dismiss' }),
+  dismissBrowser: jest.fn(),
+}));
+
+jest.mock('expo-auth-session/providers/google', () => ({
+  useAuthRequest: jest.fn().mockReturnValue([null, null, jest.fn()]),
+}));
+

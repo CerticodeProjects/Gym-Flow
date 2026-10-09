@@ -1518,7 +1518,6 @@ export function getLocalWorkoutFrame(slug: string, frame: 1 | 2 | 3 = 1) {
   return null;
 }
 
-export function hasLocalWorkoutAsset(slug?: string): boolean {
-  if (!slug) return false;
+export function hasLocalWorkoutAsset(slug: string): boolean {
   return Boolean(workoutAssetMap[slug] && workoutAssetMap[slug].length > 0);
 }
